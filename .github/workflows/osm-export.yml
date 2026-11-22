@@ -1,0 +1,83 @@
+# Ежедневная выгрузка магазинов, аптек, торговых центров и ориентиров Эстонии из OpenStreetMap
+# для карты магазинов madalhind.ee (копия workflow maza-kaina-osm / aeronavtik/mazacena-osm с эстонскими данными). Результат публикуется на GitHub Pages:
+#   https://<пользователь>.github.io/<репозиторий>/meta.json, food.json, other.json, places.json
+
+name: OSM export
+
+on:
+  schedule:
+    # 00:00 UTC = 02:00 зимой / 03:00 летом по Таллину: выгрузка (~3 минуты) готова до импорта на сайте в 03:15;
+    # Geofabrik обновляет выгрузку Эстонии днём (около 09:20 UTC), ночью берётся вчерашняя
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: osm-export
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Install osmium
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
+
+      - name: Download Estonia extract (Geofabrik)
+        run: curl -sSfL --retry 4 --retry-delay 60 --retry-all-errors --connect-timeout 30 --max-time 240 --speed-limit 100000 --speed-time 60 -o estonia.osm.pbf https://download.geofabrik.de/europe/estonia-latest.osm.pbf
+
+      - name: Cut Estonia by its official border
+        run: |
+          # Выгрузка Geofabrik захватывает полосу соседних стран: режем по границе Эстонии из самих данных
+          osmium tags-filter estonia.osm.pbf r/ISO3166-1=EE -o border.osm.pbf --overwrite
+          osmium export border.osm.pbf --geometry-types=polygon -f geojson -o border.geojson --overwrite
+          php build.php border border.geojson border-ee.geojson
+          osmium extract -p border-ee.geojson estonia.osm.pbf -o ee.osm.pbf --overwrite
+
+      - name: Filter shops, pharmacies, malls, landmarks and bottle return machines
+        run: |
+          osmium tags-filter ee.osm.pbf \
+            nwr/shop=supermarket,convenience,wholesale,general,department_store,mall,alcohol,doityourself,hardware,furniture,variety_store,chemist,cosmetics,perfumery,houseware,garden_centre,interior_decoration,household_linen,bed,electronics,sports,trade,building_materials,paint,bathroom_furnishing,kitchen,clothes,shoes \
+            nwr/amenity=pharmacy,bus_station,townhall,marketplace,hospital,post_office,place_of_worship,vending_machine,recycling \
+            nwr/railway=station,halt \
+            nwr/tourism=museum \
+            nwr/vending=bottle_return \
+            -o filtered.osm.pbf --overwrite
+          osmium export filtered.osm.pbf -f geojsonseq --add-unique-id=type_id --geometry-types=point,linestring,polygon -x print_record_separator=false -o filtered.geojsonseq --overwrite
+
+      - name: Build JSON files
+        run: |
+          export OSM_TIMESTAMP="$(osmium fileinfo -g header.option.osmosis_replication_timestamp estonia.osm.pbf || true)"
+          mkdir -p out
+          php build.php features filtered.geojsonseq out
+          touch out/.nojekyll
+
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: out
+      - id: deploy
+        uses: actions/deploy-pages@v5
+
+      - name: Keep the schedule alive
+        run: |
+          # GitHub отключает расписание, если в репозитории 60 дней нет коммитов: раз в 50 дней — пустой служебный коммит
+          last=$(git log -1 --format=%ct)
+          if [ $(( $(date +%s) - last )) -gt 4320000 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "keepalive: schedule stays active"
+            git push
+          fi
