@@ -25,11 +25,11 @@ overpass-api.de отвечал 502, maps.mail.ru — 504, private.coffee не о
 
 ## Настройка (один раз) — репозиторий ещё не создан (22.11.2026)
 
-1. Создайте на GitHub **публичный** репозиторий `madalhind-osm` у пользователя `aeronavtik-rgb` и загрузите в него
+1. Создайте на GitHub **публичный** репозиторий `madalhind-osm` у пользователя `aeronavtik` и загрузите в него
    содержимое этой папки, включая `.github/`.
 2. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
 3. **Actions → OSM export → Run workflow** — первый запуск вручную (около 3 минут).
-4. Проверьте, что открывается `https://aeronavtik-rgb.github.io/madalhind-osm/meta.json`.
+4. Проверьте, что открывается `https://aeronavtik.github.io/madalhind-osm/meta.json`.
 
 Сайт ищет выгрузку по этому адресу сам (`OsmData::exportUrl`, настройка `stores.osm_export` его меняет). Пока адрес
 не отвечает (или meta.json старше 3 суток), импорт идёт через Overpass раз в неделю; когда выгрузка появится — OSM
