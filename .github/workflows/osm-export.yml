@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 40
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deploy3.outputs.page_url || steps.deploy2.outputs.page_url || steps.deploy1.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -36,7 +36,17 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
 
       - name: Download Estonia extract (Geofabrik)
-        run: curl -sSfL --retry 4 --retry-delay 60 --retry-all-errors --connect-timeout 30 --max-time 240 --speed-limit 100000 --speed-time 60 -o estonia.osm.pbf https://download.geofabrik.de/europe/estonia-latest.osm.pbf
+        run: |
+          # «latest» у Geofabrik иногда ведёт на ещё не выложенный файл (23.11.2026: lithuania-261122 → 404),
+          # тогда берём последний доступный файл с датой из списка папки
+          base=https://download.geofabrik.de/europe/estonia
+          get() { curl -sSfL --retry 2 --retry-delay 30 --retry-all-errors --connect-timeout 30 --max-time 240 --speed-limit 100000 --speed-time 60 -o estonia.osm.pbf "$1"; }
+          if get "$base-latest.osm.pbf"; then exit 0; fi
+          for f in $(curl -sSf --retry 3 "$base/" | grep -oE 'estonia-[0-9]{6}\.osm\.pbf' | sort -ru | head -5); do
+            echo "::warning::estonia-latest недоступен, пробую $f"
+            if get "$base/$f"; then exit 0; fi
+          done
+          exit 1
 
       - name: Cut Estonia by its official border
         run: |
@@ -68,7 +78,26 @@ jobs:
       - uses: actions/upload-pages-artifact@v5
         with:
           path: out
-      - id: deploy
+
+      # Сразу после загрузки GitHub не всегда видит артефакт («No artifacts named github-pages», 24.11.2026 — у Латвии и Эстонии),
+      # а сама публикация иногда падает («Deployment failed, try again later», 24.11.2026 — у Литвы): пауза и до трёх попыток
+      - name: Wait for the artifact
+        run: sleep 20
+      - id: deploy1
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+      - name: Pause before the second attempt
+        if: steps.deploy1.outcome == 'failure'
+        run: sleep 60
+      - id: deploy2
+        if: steps.deploy1.outcome == 'failure'
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+      - name: Pause before the third attempt
+        if: steps.deploy2.outcome == 'failure'
+        run: sleep 180
+      - id: deploy3
+        if: steps.deploy2.outcome == 'failure'
         uses: actions/deploy-pages@v5
 
       - name: Keep the schedule alive
