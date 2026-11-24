@@ -23,7 +23,7 @@ concurrency:
 jobs:
   export:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     environment:
       name: github-pages
       url: ${{ steps.deploy3.outputs.page_url || steps.deploy2.outputs.page_url || steps.deploy1.outputs.page_url }}
@@ -40,11 +40,19 @@ jobs:
           # «latest» у Geofabrik иногда ведёт на ещё не выложенный файл (23.11.2026: lithuania-261122 → 404),
           # тогда берём последний доступный файл с датой из списка папки
           base=https://download.geofabrik.de/europe/estonia
-          get() { curl -sSfL --retry 2 --retry-delay 30 --retry-all-errors --connect-timeout 30 --max-time 240 --speed-limit 100000 --speed-time 60 -o estonia.osm.pbf "$1"; }
-          if get "$base-latest.osm.pbf"; then exit 0; fi
-          for f in $(curl -sSf --retry 3 "$base/" | grep -oE 'estonia-[0-9]{6}\.osm\.pbf' | sort -ru | head -5); do
+          # get адрес повторы: причина неудачи видна в аннотациях запуска
+          get() {
+            local code=0
+            curl -sSfL --retry "$2" --retry-delay 60 --retry-all-errors --connect-timeout 30 --max-time 240 --speed-limit 100000 --speed-time 60 -o estonia.osm.pbf "$1" || code=$?
+            if [ "$code" -ne 0 ]; then echo "::warning::$1: curl $code"; fi
+            return "$code"
+          }
+          if get "$base-latest.osm.pbf" 4; then exit 0; fi
+          files=$(curl -sSfL --retry 3 --retry-delay 30 --retry-all-errors --connect-timeout 30 --max-time 60 "$base/" | grep -oE 'estonia-[0-9]{6}\.osm\.pbf' | sort -ru | sed -n '1,2p') || true
+          if [ -z "$files" ]; then echo "::warning::список файлов $base/ не загрузился"; fi
+          for f in $files; do
             echo "::warning::estonia-latest недоступен, пробую $f"
-            if get "$base/$f"; then exit 0; fi
+            if get "$base/$f" 1; then exit 0; fi
           done
           exit 1
 
